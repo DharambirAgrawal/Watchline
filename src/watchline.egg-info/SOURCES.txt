@@ -1,0 +1,11 @@
+README.md
+pyproject.toml
+src/watchline/__init__.py
+src/watchline/watcher.py
+src/watchline.egg-info/PKG-INFO
+src/watchline.egg-info/SOURCES.txt
+src/watchline.egg-info/dependency_links.txt
+src/watchline.egg-info/entry_points.txt
+src/watchline.egg-info/requires.txt
+src/watchline.egg-info/top_level.txt
+tests/test_watcher.py

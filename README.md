@@ -1,28 +1,176 @@
 # Watchline
 
-Watchline is a Kubernetes monitoring tool for understanding the health of
-long-running connections and resource event streams.
+Watchline is a small Kubernetes learning project. It watches the Kubernetes
+API in real time and shows pod creations, updates, and deletions as readable
+JSON events.
 
-It is designed to:
+This is the first stage of a larger tool that will visualize connection health,
+simulate failures, compare watch strategies, and help developers understand
+Kubernetes API traffic.
 
-- visualize active network connections;
-- detect interrupted or stalled event streams;
-- recover automatically from connection failures; and
-- keep the monitored application state synchronized with the cluster.
+## What Week 1 covers
 
-## Status
+- Docker and Kubernetes fundamentals
+- A local two-node cluster created with `kind`
+- Kubernetes pods and a Service
+- A Python watcher using the Kubernetes Python client
+- Live `ADDED`, `MODIFIED`, and `DELETED` pod events
+- Tests for pod state and event formatting
 
-Watchline is currently an early-stage project. More documentation and
-installation instructions will be added as the implementation develops.
+## Prerequisites
+
+You need:
+
+- Docker with the Docker daemon running
+- `kubectl`
+- Python 3.11 or newer
+- `kind`
+
+Check the installed tools:
+
+```bash
+docker version
+kubectl version --client
+python3 --version
+kind version
+```
+
+Install `kind` if it is not already available:
+
+```bash
+curl -Lo kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+chmod +x kind
+sudo mv kind /usr/local/bin/kind
+```
+
+## Set up the project
+
+```bash
+make setup
+```
+
+This creates `.venv/`, installs Watchline, and adds the test dependencies.
+
+## Create a local cluster
+
+```bash
+make cluster
+kubectl get nodes
+```
+
+The cluster has one control-plane node and one worker node.
+
+## Deploy the demo workload
+
+```bash
+make deploy
+make demo
+```
+
+The demo runs two NGINX pods in the `watchline` namespace and creates a
+Service for them.
+
+To open the demo locally:
+
+```bash
+kubectl -n watchline port-forward service/pod-demo 8080:80
+```
+
+Visit <http://localhost:8080>.
+
+## Watch pod events
+
+Start the watcher in one terminal:
+
+```bash
+make watch
+```
+
+Events look like this:
+
+```json
+{
+  "event": "MODIFIED",
+  "name": "pod-demo-xxxxx",
+  "namespace": "watchline",
+  "node": "watchline-worker",
+  "phase": "Running",
+  "pod_ip": "10.244.1.2",
+  "ready": true,
+  "restarts": 0
+}
+```
+
+In another terminal, change the deployment and watch Kubernetes update it:
+
+```bash
+# Scale from two replicas to three.
+make scale
+
+# Restart the pods.
+kubectl -n watchline rollout restart deployment/pod-demo
+
+# Delete a pod and let Kubernetes replace it.
+kubectl -n watchline delete pod -l app=pod-demo --wait=false
+```
+
+Press `Ctrl+C` to stop the watcher. If the API watch stream closes or its event
+history expires, Watchline reconnects automatically.
+
+To watch another namespace or filter pods by label:
+
+```bash
+.venv/bin/watchline --namespace default
+.venv/bin/watchline --namespace watchline --label-selector app=pod-demo
+```
+
+## Run the tests
+
+```bash
+make test
+```
+
+The tests verify readiness detection, pod summaries, and JSON event output
+without a live Kubernetes cluster.
+
+## Project layout
+
+```text
+.
+├── k8s/
+│   ├── kind-config.yaml
+│   └── watchline-demo.yaml
+├── src/watchline/
+│   ├── __init__.py
+│   └── watcher.py
+├── tests/
+│   └── test_watcher.py
+├── Makefile
+├── pyproject.toml
+└── requirements.txt
+```
+
+## Clean up
+
+Remove the demo resources:
+
+```bash
+make down
+```
+
+Delete the cluster:
+
+```bash
+make clean
+```
 
 ## Inspiration
 
-The project was inspired by Google's work on improving the Kubernetes Python
-client's handling of connections and resource updates:
+Watchline started with Google's engineering work on Kubernetes Python client
+connection recovery and resource updates:
 
-<https://opensource.googleblog.com/2026/11/>
+- [Google Open Source blog](https://opensource.googleblog.com/2026/11/kubernetes-python-client-modern-overhaul-ai-ml.html)
+- [Kubernetes Python SharedInformer pull request](https://github.com/kubernetes-client/python/pull/2515)
 
-## Contributing
-
-Ideas, bug reports, and contributions are welcome. Please open an issue to
-describe a proposed change before submitting a pull request.
+Week 2 will extend this foundation to handle interrupted streams, stale event
+history, and shared Kubernetes connections.

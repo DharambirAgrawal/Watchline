@@ -1,0 +1,2 @@
+[console_scripts]
+watchline = watchline.watcher:main
