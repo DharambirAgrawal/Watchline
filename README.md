@@ -114,8 +114,9 @@ kubectl -n watchline rollout restart deployment/pod-demo
 kubectl -n watchline delete pod -l app=pod-demo --wait=false
 ```
 
-Press `Ctrl+C` to stop the watcher. If the API watch stream closes or its event
-history expires, Watchline reconnects automatically.
+Press `Ctrl+C` to stop the watcher promptly. Watch streams are short-lived
+so shutdown does not wait for a five-minute timeout. If the API watch stream
+closes or its event history expires, Watchline reconnects automatically.
 
 To watch another namespace or filter pods by label:
 

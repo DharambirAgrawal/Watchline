@@ -1,6 +1,14 @@
 from types import SimpleNamespace
+import threading
 
-from watchline.watcher import describe_pod, format_event, is_pod_ready
+from urllib3.exceptions import ProtocolError
+
+from watchline.watcher import (
+    describe_pod,
+    format_event,
+    is_pod_ready,
+    iter_pod_events,
+)
 
 
 def pod_status(phase="Running", ready=True):
@@ -53,4 +61,56 @@ def test_format_event_produces_json():
     assert '"event": "MODIFIED"' in result
     assert '"name": "pod-demo-test"' in result
     assert '"ready": false' in result
+
+
+def test_dropped_connection_reconnects():
+    calls = 0
+    stop_event = threading.Event()
+
+    class FakeWatch:
+        def stream(self, *_args, **_kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise ProtocolError("connection dropped")
+            yield {"type": "ADDED", "object": pod()}
+            stop_event.set()
+
+    fake_watch = FakeWatch()
+    events = iter_pod_events(
+        core_api=SimpleNamespace(list_namespaced_pod=lambda **_kwargs: None),
+        namespace="watchline",
+        timeout_seconds=5,
+        stop_event=stop_event,
+        resource_watcher=fake_watch,
+    )
+
+    observed = list(events)
+
+    assert calls == 2
+    assert len(observed) == 1
+    assert observed[0][0] == "ADDED"
+    assert observed[0][1].metadata.name == "pod-demo-test"
+
+
+def test_stop_event_prevents_reconnection():
+    calls = 0
+    stop_event = threading.Event()
+    stop_event.set()
+
+    class FakeWatch:
+        def stream(self, *_args, **_kwargs):
+            nonlocal calls
+            calls += 1
+            yield {"type": "ADDED", "object": pod()}
+
+    events = iter_pod_events(
+        core_api=SimpleNamespace(list_namespaced_pod=lambda **_kwargs: None),
+        namespace="watchline",
+        stop_event=stop_event,
+        resource_watcher=FakeWatch(),
+    )
+
+    assert list(events) == []
+    assert calls == 0
 

@@ -6,12 +6,14 @@ import argparse
 import json
 import signal
 import sys
-import time
+import threading
 from collections.abc import Iterable
 from typing import Any
 
 from kubernetes import client, config, watch
 from kubernetes.client.exceptions import ApiException
+from requests.exceptions import RequestException
+from urllib3.exceptions import HTTPError
 
 
 def load_kubernetes_config() -> None:
@@ -63,12 +65,15 @@ def iter_pod_events(
     core_api: client.CoreV1Api,
     namespace: str,
     label_selector: str | None = None,
-    timeout_seconds: int = 300,
+    timeout_seconds: int = 1,
+    stop_event: threading.Event | None = None,
+    resource_watcher: watch.Watch | None = None,
 ) -> Iterable[tuple[str, Any]]:
     """Yield pod events, reconnecting when the watch stream closes."""
-    resource_watcher = watch.Watch()
+    stop_event = stop_event or threading.Event()
+    resource_watcher = resource_watcher or watch.Watch()
 
-    while True:
+    while not stop_event.is_set():
         try:
             stream = resource_watcher.stream(
                 core_api.list_namespaced_pod,
@@ -77,8 +82,12 @@ def iter_pod_events(
                 timeout_seconds=timeout_seconds,
             )
             for event in stream:
+                if stop_event.is_set():
+                    return
                 yield event["type"], event["object"]
         except ApiException as error:
+            if stop_event.is_set():
+                return
             if error.status == 410:
                 print(
                     "Event history expired. Reconnecting with a fresh pod watch.",
@@ -89,10 +98,21 @@ def iter_pod_events(
                     f"Kubernetes API error {error.status}: {error.reason}",
                     file=sys.stderr,
                 )
-            time.sleep(2)
-        except (ConnectionError, TimeoutError):
+            stop_event.wait(2)
+        except (
+            HTTPError,
+            RequestException,
+            ConnectionError,
+            TimeoutError,
+            OSError,
+        ):
+            if stop_event.is_set():
+                return
             print("Connection interrupted. Reconnecting...", file=sys.stderr)
-            time.sleep(2)
+            stop_event.wait(2)
+
+        if stop_event.is_set():
+            return
 
 
 def parse_args() -> argparse.Namespace:
@@ -113,8 +133,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--timeout",
         type=int,
-        default=300,
-        help="Seconds per watch stream before reconnecting (default: 300)",
+        default=1,
+        help="Seconds per watch stream before reconnecting (default: 1)",
     )
     return parser.parse_args()
 
@@ -123,11 +143,12 @@ def main() -> None:
     args = parse_args()
     load_kubernetes_config()
 
-    stopping = False
+    stopping = threading.Event()
+    resource_watcher = watch.Watch()
 
     def stop_watching(_signum: int, _frame: Any) -> None:
-        nonlocal stopping
-        stopping = True
+        stopping.set()
+        resource_watcher.stop()
         print("\nStopping Watchline.", file=sys.stderr)
 
     signal.signal(signal.SIGINT, stop_watching)
@@ -146,8 +167,10 @@ def main() -> None:
             args.namespace,
             args.label_selector,
             args.timeout,
+            stopping,
+            resource_watcher,
         ):
-            if stopping:
+            if stopping.is_set():
                 break
             print(format_event(event_type, pod), flush=True)
     except KeyboardInterrupt:
